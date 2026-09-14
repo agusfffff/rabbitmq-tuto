@@ -1,4 +1,4 @@
-## helloworld
+## 1 - helloworld
 
 RabbitMQ is a message broker: it accepts and forwards messages. You can think about it as a post office: when you put the mail that you want posting in a post box, you can be sure that the letter carrier will eventually deliver the mail to your recipient. In this analogy, RabbitMQ is a post box, a post office, and a letter carrier.
 
@@ -29,7 +29,7 @@ Note that we declare the queue here, as well. Because we might start the consume
 
 We're about to tell the server to deliver us the messages from the queue. Since it will push us messages asynchronously, we will read the messages from a channel (returned by amqp::Consume) in a goroutine.
 
-## workqueues
+## 2 - workqueues
 
 We'll create a Work Queue that will be used to distribute time-consuming tasks among multiple workers.
 
@@ -96,7 +96,7 @@ If all the workers are busy, your queue can fill up. You will want to keep an ey
 Using message acknowledgments and prefetch count you can set up a work queue. The durability options let the tasks survive even if RabbitMQ is restarted.
 
 
-## publishsuscribe 
+## 3 - publishsuscribe 
 
 We'll deliver a message to multiple consumers. This pattern is known as "publish/subscribe".
 
@@ -186,4 +186,44 @@ As you see, after establishing the connection we declared the exchange. This ste
 
 The messages will be lost if no queue is bound to the exchange yet, but that's okay for us; if no consumer is listening yet we can safely discard the message.
 
-The interpretation of the result is straightforward: data from exchange logs goes to two queues with server-assigned names. And that's exactly what we intended.
+The interpretation of the result is straightforward: data from exchange logs goes to two queues with server-assigned names. And that's exactly what we intended. 
+
+
+## 4 - routing
+In the previous we built a simple logging system. We were able to broadcast log messages to many receivers.
+
+Now we're going to add a feature to it - we're going to make it possible to subscribe only to a subset of the messages. For example, we will be able to direct only critical error messages to the log file (to save disk space), while still being able to print all of the log messages on the console.
+
+
+### binding 
+
+A binding is a relationship between an exchange and a queue. This can be simply read as: the queue is interested in messages from this exchange.
+
+Bindings can take an extra routing_key parameter. To avoid the confusion with a Channel.Publish parameter we're going to call it a binding key. This is how we could create a binding with a key:
+
+err = ch.QueueBind(
+  q.Name,    // queue name
+  "black",   // routing key
+  "logs",    // exchange
+  false,
+  nil)
+
+  The meaning of a binding key depends on the exchange type. The fanout exchanges, which we used previously, simply ignored its value.
+
+### direct exchange 
+
+Our logging system from the previous tutorial broadcasts all messages to all consumers. We want to extend that to allow filtering messages based on their severity. For example we may want the script which is writing log messages to the disk to only receive critical errors, and not waste disk space on warning or info log messages.
+
+We were using a fanout exchange, which doesn't give us much flexibility - it's only capable of mindless broadcasting.
+
+We will use a direct exchange instead. The routing algorithm behind a direct exchange is simple - a message goes to the queues whose binding key exactly matches the routing key of the message.
+
+It is perfectly legal to bind multiple queues with the same binding key. In that case, the direct exchange will behave like fanout and will broadcast the message to all the matching queues
+
+
+### Emitting logs
+We'll use this model for our logging system. Instead of fanout we'll send messages to a direct exchange. We will supply the log severity as a routing key. That way the receiving script will be able to select the severity it wants to receive. Let's focus on emitting logs first.
+
+### Suscrbing
+Receiving messages will work just like in the previous tutorial, with one exception - we're going to create a new binding for each severity we're interested in.
+
