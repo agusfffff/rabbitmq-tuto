@@ -94,3 +94,96 @@ Note about queue size
 If all the workers are busy, your queue can fill up. You will want to keep an eye on that, and maybe add more workers, or have some other strategy.
 
 Using message acknowledgments and prefetch count you can set up a work queue. The durability options let the tasks survive even if RabbitMQ is restarted.
+
+
+## publishsuscribe 
+
+We'll deliver a message to multiple consumers. This pattern is known as "publish/subscribe".
+
+To illustrate the pattern, we're going to build a simple logging system. It will consist of two programs -- the first will emit log messages and the second will receive and print them.
+
+In our logging system every running copy of the receiver program will get the messages. That way we'll be able to run one receiver and direct the logs to disk; and at the same time we'll be able to run another receiver and see the logs on the screen.
+
+Essentially, published log messages are going to be broadcast to all the receivers.
+
+
+### Exchanges
+
+In previous parts of the tutorial we sent and received messages to and from a queue. Now it's time to introduce the full messaging model in Rabbit.
+
+Let's quickly go over what we covered in the previous tutorials:
+
+- A producer is a user application that sends messages.
+- A queue is a buffer that stores messages.
+- A consumer is a user application that receives messages.
+
+The core idea in the messaging model in RabbitMQ is that the producer never sends any messages directly to a queue. Actually, quite often the producer doesn't even know if a message will be delivered to any queue at all.
+
+Instead, the producer can only send messages to an exchange. An exchange is a very simple thing. On one side it receives messages from producers and the other side it pushes them to queues. The exchange must know exactly what to do with a message it receives. Should it be appended to a particular queue? Should it be appended to many queues? Or should it get discarded. The rules for that are defined by the exchange type.
+
+There are a few exchange types available: direct, topic, headers and fanout. We'll focus on the last one -- the fanout. Let's create an exchange of this type, and call it logs:
+
+The fanout exchange is very simple. As you can probably guess from the name, it just broadcasts all the messages it receives to all the queues it knows. And that's exactly what we need for our logger.
+
+
+### Listing exchanges
+
+To list the exchanges on the server you can run the ever useful rabbitmqctl:
+
+sudo rabbitmqctl list_exchanges
+
+In this list there will be some amq.* exchanges and the default (unnamed) exchange. These are created by default, but it is unlikely you'll need to use them at the moment.
+
+### The default exchange
+
+In previous parts of the tutorial we knew nothing about exchanges, but still were able to send messages to queues. That was possible because we were using a default exchange, which is identified by the empty string ("").
+
+Recall how we published a message before:
+
+
+err = ch.PublishWithContext(ctx,
+  "",     // exchange
+  q.Name, // routing key
+  false,  // mandatory
+  false,  // immediate
+  amqp.Publishing{
+    ContentType: "text/plain",
+    Body:        []byte(body),
+})
+
+Here we use the default or nameless exchange: messages are routed to the queue with the name specified by routing_key parameter, if it exists.
+
+
+### Temporary queues
+
+As you may remember previously we were using queues that had specific names (remember hello and task_queue?). Being able to name a queue was crucial for us -- we needed to point the workers to the same queue. Giving a queue a name is important when you want to share the queue between producers and consumers.
+
+But that's not the case for our logger. We want to hear about all log messages, not just a subset of them. We're also interested only in currently flowing messages not in the old ones. To solve that we need two things.
+
+Firstly, whenever we connect to Rabbit we need a fresh, empty queue. To do this we could create a queue with a random name, or, even better - let the server choose a random queue name for us.
+
+Secondly, once we disconnect the consumer the queue should be automatically deleted.
+
+In the amqp client, when we supply queue name as an empty string, we create a non-durable queue with a generated name. 
+
+When the connection that declared it closes, the queue will be deleted because it is declared as exclusive.
+
+### Bindings
+
+We've already created a fanout exchange and a queue. Now we need to tell the exchange to send messages to our queue. That relationship between exchange and a queue is called a binding.
+
+From now on the logs exchange will append messages to our queue.
+
+You can list existing bindings using, you guessed it,
+
+rabbitmqctl list_bindings
+
+### implementation 
+
+The producer program, which emits log messages, doesn't look much different from the previous tutorial. The most important change is that we now want to publish messages to our logs exchange instead of the nameless one. We need to supply a routingKey when sending, but its value is ignored for fanout exchanges
+
+As you see, after establishing the connection we declared the exchange. This step is necessary as publishing to a non-existing exchange is forbidden.
+
+The messages will be lost if no queue is bound to the exchange yet, but that's okay for us; if no consumer is listening yet we can safely discard the message.
+
+The interpretation of the result is straightforward: data from exchange logs goes to two queues with server-assigned names. And that's exactly what we intended.
